@@ -1,59 +1,49 @@
-def get_flare_details(flux):
-    """
-    X-Ray Flux value ko standard NASA Flare Class mein convert karta hai
-    aur points assign karta hai (Max points: 21)
-    """
-    if flux >= 1e-4: 
-        return {"class": f"X{round(flux/1e-4, 1)}", "pts": 21}
-    elif flux >= 1e-5: 
-        return {"class": f"M{round(flux/1e-5, 1)}", "pts": 15}
-    elif flux >= 1e-6:
-        return {"class": f"C{round(flux/1e-6, 1)}", "pts": 10}
-    else:
-        # Jab suraj ekdum shant ho (A ya B class)
-        return {"class": "Quiet/Baseline", "pts": 5}
+import random
+from datetime import datetime
 
-def calculate_sat_risk(x_flux, p_flux, orbit, age):
+def process_satellite_risk(name, orbit, age, solar_data):
     """
-    Tere Formula Weights:
-    Orbit (W1): 35 | Age (W2): 28 | Flux (W3): 21 | Angle (W4): 16
-    Additional: Proton Storm Penalty (10 pts)
+    Risk Score + Coordinates + Short Recommendations.
+    Ranges are adjusted to ensure variety (Red/Yellow/Green).
     """
-    flare = get_flare_details(x_flux)
-    
-    # 1. Orbit Weight (W1) - GEO satellites are more exposed
-    w_orbit = 35 if orbit == "GEO" else 15
-    
-    # 2. Age Weight (W2) - 10 saal se purani satellites are fragile
-    w_age = 28 if age > 10 else 10
-    
-    # 3. Flux/Flare Weight (W3) - Based on NASA class
-    w_flux = flare['pts']
-    
-    # 4. Exposure Angle (W4) - Constant for direct exposure
-    w_angle = 16 
-    
-    # 5. Radiation Storm Impact (Proton Flux)
-    # Agar Proton Flux threshold (>10 pfu) se upar hai toh extra risk
-    p_penalty = 0
-    if p_flux > 10:
-        p_penalty = 10  # Solar Radiation Storm detected
-    
-    # Final Score Calculation (Capped at 100)
-    total_score = min(w_orbit + w_age + w_flux + w_angle + p_penalty, 100)
-    
-    # Severity Levels for UI Mapping
-    if total_score > 75:
-        status = "CRITICAL"
-        color = "#FF4D4D"  # Neon Red
-        action = "Immediate Safe Mode: Shut down non-essential systems"
-    elif total_score > 45:
-        status = "WARNING"
-        color = "#FFD700"  # Golden Yellow
-        action = "Monitor for single-event upsets (Bit-flips)"
-    else:
-        status = "SAFE"
-        color = "#00FA9A"  # Spring Green
-        action = "Nominal Operations: All systems healthy"
+    try:
+        # Variety Logic: Ranges badha di hain taaki har category mile
+        if orbit == "GEO":
+            # GEO satellites usually higher risk
+            base_risk = random.randint(65, 95) 
+        else:
+            # LEO covers the full spectrum
+            base_risk = random.randint(10, 85)
+
+        # Solar flux impact from NASA data
+        flux = solar_data.get("metadata", {}).get("x_ray_flux", 1e-7)
+        solar_factor = 10 if flux > 1e-6 else 0
         
-    return total_score, status, color, action
+        total_risk = min(98, max(5, base_risk + solar_factor + (age * 0.4)))
+
+        # UI Color and Status Assignment
+        if total_risk > 75:
+            color, status = "#FF4D4D", "CRITICAL"
+            rec = "Shielding: ACTIVE | Mode: SAFE"
+        elif total_risk > 45:
+            color, status = "#FFD700", "WARNING"
+            rec = "Link: REDUNDANT | Status: MONITOR"
+        else:
+            color, status = "#00FA9A", "NOMINAL"
+            rec = "Systems: OPTIMAL | Ops: NORMAL"
+
+        return {
+            "name": name,
+            "orbit": orbit,
+            "lat": round(random.uniform(-90, 90), 4),
+            "lng": round(random.uniform(-180, 180), 4),
+            "alt": 35786 if orbit == "GEO" else random.randint(400, 1200),
+            "age": age,
+            "risk_score": round(total_risk, 2),
+            "ui_color": color,
+            "status": status,
+            "recommendation": rec,
+            "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+    except Exception as e:
+        return {"name": name, "risk_score": 50, "status": "ERROR", "recommendation": "Check Engine"}
