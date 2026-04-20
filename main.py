@@ -1,93 +1,108 @@
-from fastapi import FastAPI
+import requests
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
-import fetcher
-import processor
+import random
 
-app = FastAPI(
-    title="HelioScar Satellite Risk API",
-    description="Live Satellite Risk Monitoring based on Solar Flux and TLE data",
-    version="1.0.0"
-)
+# Custom Modules
+from fetcher import fetch_nasa_solar_data
+from processor import process_satellite_risk
 
-# Frontend Integration ke liye CORS Settings
+app = FastAPI(title="HelioStar Professional Engine")
+
+# CORS Setup
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Sabhi origins allow hain (Testing/Hackathon ke liye best)
-    allow_credentials=True,
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-@app.get("/")
-def home():
-    return {
-        "status": "Online",
-        "system": "HelioScar Mod-1",
-        "documentation": "/docs"
-    }
+master_satellites_list = []
 
-@app.get("/api/helio-risk")
-def helio_risk_api():
-    # 1. Fetch Live Data from NASA/NOAA (via fetcher.py)
-    x_flux = fetcher.get_live_flux()
-    p_flux = fetcher.get_proton_flux()
-    tle_db = fetcher.get_tle_data()
-    
-    # Flare Details nikalna (A, B, C, M, X Class)
-    flare_info = processor.get_flare_details(x_flux)
-    
-    # 2. Satellite Inventory (10 Satellites for Dashboard)
-    sat_list = [
-        {"name": "ISS (ZARYA)", "orbit": "LEO", "age": 26},
-        {"name": "INSAT-3DR", "orbit": "GEO", "age": 8},
-        {"name": "HUBBLE", "orbit": "LEO", "age": 34},
-        {"name": "GSAT-11", "orbit": "GEO", "age": 6},
-        {"name": "STARLINK-1204", "orbit": "LEO", "age": 2},
-        {"name": "GPS-III SV01", "orbit": "MEO", "age": 5},
-        {"name": "GOES-18", "orbit": "GEO", "age": 2},
-        {"name": "METEOSAT-11", "orbit": "GEO", "age": 9},
-        {"name": "AMAZON KUIPER-1", "orbit": "LEO", "age": 1},
-        {"name": "ARYABHATA-NEXT", "orbit": "LEO", "age": 1}
+def get_live_satellite_names():
+    """Famous VIPs + Live Data + Generator (Ensures 1000 Unique Sats)"""
+    vip_sats = [
+        "ISS (ZARYA)", "HUBBLE SPACE TELESCOPE", "JAMES WEBB (JWST)", 
+        "GPS NAVSTAR", "GOES-16 (NOAA)", "STARLINK-V2", "CHANDRAYAAN-3", 
+        "ADITYA-L1", "SPUTNIK-1 (LEGACY)", "EXPLORER-1", "ARYABHATA"
     ]
     
-    processed_sats = []
-    
-    # 3. Har satellite ke liye Risk aur Location calculate karna
-    for sat in sat_list:
-        # A. TLE data se Latitude/Longitude nikalna
-        tle = tle_db.get(sat['name'], ["", ""])
-        coords = fetcher.get_sat_coords(sat['name'], tle[0], tle[1])
-        
-        # B. Risk Formula apply karna (Logic from processor.py)
-        score, status, color, action = processor.calculate_sat_risk(
-            x_flux, p_flux, sat['orbit'], sat['age']
-        )
-        
-        # C. Satellite ka final data object banana
-        processed_sats.append({
-            "name": sat['name'],
-            "orbit": sat['orbit'],
-            "age": f"{sat['age']} yrs",
-            "risk_score": score,
-            "status": status,
-            "ui_color": color,
-            "recommendation": action,
-            "coordinates": {
-                "lat": coords['lat'],
-                "lon": coords['lon']
-            }
-        })
+    live_names = []
+    try:
+        url = "https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=tle"
+        r = requests.get(url, timeout=3)
+        if r.status_code == 200:
+            lines = r.text.splitlines()
+            live_names = [lines[i].strip() for i in range(0, 300, 3)]
+    except:
+        pass
 
-    # 4. Final Unified Response for Frontend
+    combined = vip_sats + live_names
+    unique_names = []
+    seen = set()
+    for name in combined:
+        if name not in seen:
+            unique_names.append(name)
+            seen.add(name)
+            
+    # Search Fix: Adding more variety prefixes
+    prefixes = ["STARLINK", "IRIS", "COSMOS", "GENESIS", "OSIRIS", "METIS", "ONEWEB"]
+    while len(unique_names) < 1000:
+        f_name = f"{random.choice(prefixes)}-{random.randint(1000, 9999)}"
+        if f_name not in seen:
+            unique_names.append(f_name)
+            seen.add(f_name)
+            
+    return unique_names[:1000]
+
+def generate_full_report():
+    global master_satellites_list
+    solar_data = fetch_nasa_solar_data()
+    names = get_live_satellite_names()
+    
+    temp = []
+    for name in names:
+        orbit = "GEO" if any(x in name.upper() for x in ["GOES", "INSAT", "GSAT", "METEOR"]) else "LEO"
+        sat_data = process_satellite_risk(name, orbit, random.randint(1, 15), solar_data)
+        temp.append(sat_data)
+    
+    master_satellites_list = temp
+    return solar_data
+
+@app.on_event("startup")
+async def startup_event():
+    generate_full_report()
+    print(f"Engine Ready: {len(master_satellites_list)} Satellites Loaded")
+
+@app.get("/api/helio-risk")
+def get_risk_dashboard():
+    """Strictly returns 4 Red, 3 Yellow, 3 Green for Dashboard"""
+    solar_data = generate_full_report()
+    
+    # 1000 ki list mein se filtering
+    high_risk = [s for s in master_satellites_list if s['risk_score'] > 75]
+    med_risk = [s for s in master_satellites_list if 45 < s['risk_score'] <= 75]
+    low_risk = [s for s in master_satellites_list if s['risk_score'] <= 45]
+    
+    # Strict 4-3-3 combination
+    curated = high_risk[:4] + med_risk[:3] + low_risk[:3]
+    
+    # Safety: Agar list choti hai toh pehle 10 de do
+    if len(curated) < 10:
+        curated = master_satellites_list[:10]
+
     return {
-        "metadata": {
-            "timestamp": "Live",
-            "flare_class": flare_info['class'],
-            "x_ray_flux": x_flux,
-            "proton_flux": p_flux,
-            "global_alert": "Nominal" if x_flux < 1e-5 else "Solar Flare Warning"
-        },
-        "satellites": processed_sats
+        "metadata": solar_data["metadata"],
+        "curated_top_10": curated,
+        "all_satellites": master_satellites_list
     }
 
-# Command to Run: python -m uvicorn main:app --reload
+@app.get("/api/search")
+def search_satellite(name: str):
+    query = name.upper().strip()
+    results = [s for s in master_satellites_list if query in s['name'].upper()]
+    return results[:15]
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
